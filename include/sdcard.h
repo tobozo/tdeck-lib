@@ -16,15 +16,30 @@ typedef struct td_mountdata_t {
 } td_mountdata_t;
 
 
+typedef struct td_sdcard_t {
+    const char mount_point[64];
+    sdspi_device_config_t *slot_config;
+    gpio_config_t *gpio_config;
+    sdmmc_host_t *host;
+    sdmmc_card_t* card;
+    bool mounted;
+} td_sdcard_t;
+
+
+
 #define SDCARD_MOUNT_POINT "/sdcard"
 
-bool sdcard_init();
-void* sdcard_mount(const char* mount_point);
-void* sdcard_init_and_mount(const char* mount_point);
-void sdcard_unmount(void* context);
-bool sdcard_is_mounted(void* context);
 
 esp_err_t td_sdcard_init(void *ctx);
+
+esp_err_t sdcard_init(void *ctx);
+esp_err_t sdcard_mount(void *ctx, const char* mount_point);
+void* sdcard_mount_impl(void *ctx, const char* mount_point);
+void* sdcard_init_and_mount(void *ctx, const char* mount_point);
+void sdcard_unmount(void *ctx);
+bool sdcard_is_mounted(void *ctx);
+
+
 
 
 #endif

@@ -7,6 +7,7 @@
 #include <keyboard.h>
 #include <trackball.h>
 #include <speaker.h>
+#include <sdcard.h>
 
 typedef struct td_board_t {
   td_battery_t Battery;
@@ -14,6 +15,7 @@ typedef struct td_board_t {
   td_keyboard_t Keyboard;
   td_trackball_t Trackball;
   td_speaker_t Speaker;
+  td_sdcard_t SDCard;
 
   struct {
     struct {

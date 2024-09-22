@@ -4,7 +4,7 @@
 #define TAG "tdeck_sdcard"
 
 esp_err_t td_sdcard_init(void *ctx) {
-    return sdcard_init() ? ESP_OK : ESP_ERR_INVALID_ARG;
+    return sdcard_init(ctx);
 }
 
 
@@ -17,45 +17,67 @@ esp_err_t td_sdcard_init(void *ctx) {
  * See https://github.com/Xinyuan-LilyGO/T-Deck/blob/master/examples/UnitTest/UnitTest.ino
  * @return success result
  */
-bool sdcard_init() {
+esp_err_t sdcard_init(void *ctx) {
     ESP_LOGD(TAG, "init");
 
-    gpio_config_t config = {
-        .pin_bit_mask = BIT64(BOARD_SDCARD_CS_PIN) | BIT64(BOARD_RADIO_CS_PIN) | BIT64(BOARD_DISPLAY_CS_PIN),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
+    td_board_t* Board = (td_board_t*)ctx;
+    td_sdcard_t* SDCard = &Board->SDCard;
 
-    if (gpio_config(&config) != ESP_OK) {
+    static gpio_config_t sd_gpio_config;
+
+    sd_gpio_config.pin_bit_mask = BIT64(BOARD_SDCARD_CS_PIN) | BIT64(BOARD_RADIO_CS_PIN) | BIT64(BOARD_DISPLAY_CS_PIN);
+    sd_gpio_config.mode         = GPIO_MODE_OUTPUT;
+    sd_gpio_config.pull_up_en   = GPIO_PULLUP_DISABLE;
+    sd_gpio_config.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    sd_gpio_config.intr_type    = GPIO_INTR_DISABLE;
+
+    SDCard->gpio_config = &sd_gpio_config;
+
+
+    if (gpio_config(&sd_gpio_config) != ESP_OK) {
         ESP_LOGE(TAG, "GPIO init failed");
-        return false;
+        return ESP_ERR_INVALID_ARG;
     }
 
     if (gpio_set_level(BOARD_SDCARD_CS_PIN, 1) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set board CS pin high");
-        return false;
+        return ESP_ERR_INVALID_ARG;
     }
 
     if (gpio_set_level(BOARD_RADIO_CS_PIN, 1) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set radio CS pin high");
-        return false;
+        return ESP_ERR_INVALID_ARG;
     }
 
     if (gpio_set_level(BOARD_DISPLAY_CS_PIN, 1) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set TFT CS pin high");
-        return false;
+        return ESP_ERR_INVALID_ARG;
     }
 
-    return true;
+    return ESP_OK;
+}
+
+
+esp_err_t sdcard_mount(void *ctx, const char* mount_point)
+{
+
+    td_board_t* Board = (td_board_t*)ctx;
+    td_sdcard_t* SDCard = &Board->SDCard;
+
+    // snprintf(SDCard->mount_point, 63, "%", mount_point);
+
+    void* ret = sdcard_mount_impl(ctx, mount_point);
+
+    return ret != NULL ? ESP_OK : ESP_ERR_INVALID_ARG;
 }
 
 
 
-
-void* sdcard_mount(const char* mount_point) {
+void* sdcard_mount_impl(void *ctx, const char* mount_point) {
     ESP_LOGI(TAG, "Mounting %s", mount_point);
+
+    td_board_t* Board = (td_board_t*)ctx;
+    td_sdcard_t* SDCard = &Board->SDCard;
 
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false,
@@ -65,18 +87,20 @@ void* sdcard_mount(const char* mount_point) {
     };
 
     // Init without card detect (CD) and write protect (WD)
-    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot_config.gpio_cs = BOARD_SDCARD_CS_PIN;
-    slot_config.host_id = BOARD_SPI;
+    static sdspi_device_config_t sdcard_slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+    SDCard->slot_config = &sdcard_slot_config;
+    SDCard->slot_config->gpio_cs = BOARD_SDCARD_CS_PIN;
+    SDCard->slot_config->host_id = BOARD_SPI;
 
-    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    static sdmmc_host_t sdcard_host = SDSPI_HOST_DEFAULT();
+    SDCard->host        = &sdcard_host;
     // The following value is from T-Deck repo's UnitTest.ino project:
     // https://github.com/Xinyuan-LilyGO/T-Deck/blob/master/examples/UnitTest/UnitTest.ino
     // Observation: Using this automatically sets the bus to 20MHz
-    host.max_freq_khz = 800000U;
+    SDCard->host->max_freq_khz = 800000U;
 
-    sdmmc_card_t* card;
-    esp_err_t ret = esp_vfs_fat_sdspi_mount(mount_point, &host, &slot_config, &mount_config, &card);
+
+    esp_err_t ret = esp_vfs_fat_sdspi_mount(mount_point, SDCard->host, SDCard->slot_config, &mount_config, &SDCard->card);
 
     if (ret != ESP_OK) {
         if (ret == ESP_FAIL) {
@@ -87,14 +111,18 @@ void* sdcard_mount(const char* mount_point) {
         return NULL;
     }
 
-    td_mountdata_t* data = (td_mountdata_t*)malloc(sizeof(td_mountdata_t));
+    //SDCard->data = (td_mountdata_t*)malloc(sizeof(td_mountdata_t));
 
-    data->card = card;
-    data->mount_point = mount_point;
+    snprintf(SDCard->mount_point, 63, "%s", mount_point);
+
+    //SDCard->mount_point = mount_point;
 
     ESP_LOGI(TAG, "Filesystem mounted");
+
+    SDCard->mounted = true;
+
     // Card has been initialized, print its properties
-    sdmmc_card_print_info(stdout, card);
+    sdmmc_card_print_info(stdout, SDCard->card);
 
     // TODO: remove this block
     {
@@ -107,15 +135,15 @@ void* sdcard_mount(const char* mount_point) {
         closedir(rootdir);
     }
 
-    return data;
+    return SDCard;
 }
 
-void* sdcard_init_and_mount(const char* mount_point) {
-    if (!sdcard_init()) {
+void* sdcard_init_and_mount(void *ctx, const char* mount_point) {
+    if (sdcard_init(ctx)!=ESP_OK) {
         ESP_LOGE(TAG, "Failed to set SPI CS pins high. This is a pre-requisite for mounting.");
         return NULL;
     }
-    td_mountdata_t* data = (td_mountdata_t*)sdcard_mount(mount_point);
+    td_mountdata_t* data = (td_mountdata_t*)sdcard_mount(ctx, mount_point);
     if (data == NULL) {
         ESP_LOGE(TAG, "Mount failed for %s", mount_point);
         return NULL;
