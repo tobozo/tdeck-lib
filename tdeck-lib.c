@@ -91,10 +91,8 @@ esp_err_t td_create_board_option(td_board_option_type_t type, int value, td_boar
     case OPTKeyboard:
     case OPTBattery:
     case OPTDisplay:
-    case OPTKeyboard:
     case OPTTrackball:
     case OPTSpeaker:
-    case OPTSDCard:
     case OPTRadio:
       opt->option   = type;
       opt->value    = value;
