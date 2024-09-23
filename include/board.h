@@ -9,6 +9,34 @@
 #include <speaker.h>
 #include <sdcard.h>
 
+// Board options creation example:
+//
+// td_board_option_t SDCardBehaviour;
+// td_create_board_option(OPTSDCard, SDCardAutoMount, &SDCardBehaviour); // set sd auto mount
+//
+// td_board_option_t KeyboardLayout;
+// td_create_board_option(OPTKeyboard, KBDLayoutFR, &KeyboardLayout); // set non-default keyboard layout
+//
+// td_board_init(&Board, SDCardBehavior, DisplayOrientation);
+
+typedef enum td_board_option_type_t {
+  OPTBattery,
+  OPTDisplay,
+  OPTKeyboard,
+  OPTTrackball,
+  OPTSpeaker,
+  OPTSDCard,
+  OPTRadio
+} td_board_option_type_t;
+
+
+typedef struct td_board_option_t {
+  td_board_option_type_t option;
+  int value;
+  int checksum;
+} td_board_option_t;
+
+
 typedef struct td_board_t {
   td_battery_t Battery;
   td_display_t Display;
@@ -27,12 +55,14 @@ typedef struct td_board_t {
   } proto;
 } td_board_t;
 
+
 #define BOARD_SPI_MISO_PIN 38
 #define BOARD_SPI_MOSI_PIN 41
 #define BOARD_SPI_SCK_PIN 40
 #define BOARD_SPI SPI2_HOST
 
 #define BOARD_SDCARD_CS_PIN 39
+#define SDCARD_MOUNT_POINT "/sdcard"
 
 #define BOARD_RADIO_CS_PIN 9
 

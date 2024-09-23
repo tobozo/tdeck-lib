@@ -1,13 +1,9 @@
 #include <board.h>
 #include <sdcard.h>
 
-#define TAG "tdeck_sdcard"
+const static char *TAG = "TDECKSDCARD";
 
-esp_err_t td_sdcard_init(void *ctx) {
-    return sdcard_init(ctx);
-}
-
-
+// courtesy of tobozo
 // inspired by https://github.com/ByteWelder/Tactility/tree/main/boards/lilygo_tdeck
 
 /**
@@ -17,7 +13,7 @@ esp_err_t td_sdcard_init(void *ctx) {
  * See https://github.com/Xinyuan-LilyGO/T-Deck/blob/master/examples/UnitTest/UnitTest.ino
  * @return success result
  */
-esp_err_t sdcard_init(void *ctx) {
+esp_err_t td_sdcard_init(void *ctx) {
     ESP_LOGD(TAG, "init");
 
     td_board_t* Board = (td_board_t*)ctx;
@@ -36,46 +32,39 @@ esp_err_t sdcard_init(void *ctx) {
 
     if (gpio_config(&sd_gpio_config) != ESP_OK) {
         ESP_LOGE(TAG, "GPIO init failed");
-        return ESP_ERR_INVALID_ARG;
+        return ESP_FAIL;
     }
 
     if (gpio_set_level(BOARD_SDCARD_CS_PIN, 1) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set board CS pin high");
-        return ESP_ERR_INVALID_ARG;
+        return ESP_FAIL;
     }
 
     if (gpio_set_level(BOARD_RADIO_CS_PIN, 1) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set radio CS pin high");
-        return ESP_ERR_INVALID_ARG;
+        return ESP_FAIL;
     }
 
     if (gpio_set_level(BOARD_DISPLAY_CS_PIN, 1) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set TFT CS pin high");
-        return ESP_ERR_INVALID_ARG;
+        return ESP_FAIL;
     }
+
+    ESP_LOGI(TAG, "SDCard init OK");
+
+    if( SDCard->behavior == SDCardAutoMount ) {
+        ESP_LOGI(TAG, "Automounting filesystem");
+        return td_sdcard_mount( ctx, SDCARD_MOUNT_POINT );
+    }
+
+    ESP_LOGE(TAG, "Behavior: %d", SDCard->behavior);
 
     return ESP_OK;
 }
 
 
-esp_err_t sdcard_mount(void *ctx, const char* mount_point)
+esp_err_t td_sdcard_mount(void *ctx, const char* mount_point)
 {
-
-    td_board_t* Board = (td_board_t*)ctx;
-    td_sdcard_t* SDCard = &Board->SDCard;
-
-    // snprintf(SDCard->mount_point, 63, "%", mount_point);
-
-    void* ret = sdcard_mount_impl(ctx, mount_point);
-
-    return ret != NULL ? ESP_OK : ESP_ERR_INVALID_ARG;
-}
-
-
-
-void* sdcard_mount_impl(void *ctx, const char* mount_point) {
-    ESP_LOGI(TAG, "Mounting %s", mount_point);
-
     td_board_t* Board = (td_board_t*)ctx;
     td_sdcard_t* SDCard = &Board->SDCard;
 
@@ -99,7 +88,6 @@ void* sdcard_mount_impl(void *ctx, const char* mount_point) {
     // Observation: Using this automatically sets the bus to 20MHz
     SDCard->host->max_freq_khz = 800000U;
 
-
     esp_err_t ret = esp_vfs_fat_sdspi_mount(mount_point, SDCard->host, SDCard->slot_config, &mount_config, &SDCard->card);
 
     if (ret != ESP_OK) {
@@ -108,14 +96,10 @@ void* sdcard_mount_impl(void *ctx, const char* mount_point) {
         } else {
             ESP_LOGE(TAG, "Mounting failed (%s)", esp_err_to_name(ret));
         }
-        return NULL;
+        return ret;
     }
 
-    //SDCard->data = (td_mountdata_t*)malloc(sizeof(td_mountdata_t));
-
     snprintf(SDCard->mount_point, 63, "%s", mount_point);
-
-    //SDCard->mount_point = mount_point;
 
     ESP_LOGI(TAG, "Filesystem mounted");
 
@@ -135,45 +119,50 @@ void* sdcard_mount_impl(void *ctx, const char* mount_point) {
         closedir(rootdir);
     }
 
-    return SDCard;
+    return ESP_OK;
 }
 
-void* sdcard_init_and_mount(void *ctx, const char* mount_point) {
-    if (sdcard_init(ctx)!=ESP_OK) {
+
+esp_err_t td_sdcard_init_and_mount(void *ctx, const char* mount_point) {
+    if (td_sdcard_init(ctx)!=ESP_OK) {
         ESP_LOGE(TAG, "Failed to set SPI CS pins high. This is a pre-requisite for mounting.");
-        return NULL;
+        return ESP_FAIL;
     }
-    td_mountdata_t* data = (td_mountdata_t*)sdcard_mount(ctx, mount_point);
-    if (data == NULL) {
-        ESP_LOGE(TAG, "Mount failed for %s", mount_point);
-        return NULL;
-    }
-
-    sdmmc_card_print_info(stdout, data->card);
-
-    return data;
+    return td_sdcard_mount(ctx, mount_point);
 }
 
-void sdcard_unmount(void* context) {
-    td_mountdata_t* data = (td_mountdata_t*)context;
-    ESP_LOGI(TAG, "Unmounting %s", data->mount_point);
 
-    assert(data != NULL);
-    if (esp_vfs_fat_sdcard_unmount(data->mount_point, data->card) != ESP_OK) {
-        ESP_LOGE(TAG, "Unmount failed for %s", data->mount_point);
+esp_err_t td_sdcard_unmount(void* ctx) {
+    td_board_t* Board = (td_board_t*)ctx;
+    td_sdcard_t* SDCard = &Board->SDCard;
+
+    ESP_LOGI(TAG, "Unmounting %s", SDCard->mount_point);
+
+    if (esp_vfs_fat_sdcard_unmount(SDCard->mount_point, SDCard->card) != ESP_OK) {
+        ESP_LOGE(TAG, "Unmount failed for %s", SDCard->mount_point);
+        return ESP_FAIL;
     }
 
-    free(data);
+    return ESP_OK;
 }
 
-bool sdcard_is_mounted(void* context) {
-    td_mountdata_t* data = (td_mountdata_t*)context;
-    // TODO: use a semaphore lock since SD, Radio and LCD share the same SPI bus
-    //if ( xSemaphoreTake( sd_radio_display_lock, 100 ) ) {
-        bool result = (data != NULL) && (sdmmc_get_status(data->card) == ESP_OK);
-        // xSemaphoreGive( sd_radio_display_lock );
-        return result;
-    //} else {
-    //    return false;
-    //}
-}
+
+// bool td_sdcard_is_mounted(void* ctx) {
+//     td_board_t* Board = (td_board_t*)ctx;
+//     td_sdcard_t* SDCard = &Board->SDCard;
+//
+//     if(SDCardMutex != NULL) {
+//         if( ! xSemaphoreTake(SDCardMutex, 100) ) {
+//             ESP_LOGE(TAG, "Failed to obtain lock");
+//             return false;
+//         }
+//     }
+//
+//     bool result = (SDCard->card != NULL) && (sdmmc_get_status(SDCard->card) == ESP_OK);
+//
+//     if(SDCardMutex != NULL) {
+//         xSemaphoreGive(SDCardMutex);
+//     }
+//
+//     return result;
+// }
